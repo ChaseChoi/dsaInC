@@ -4,63 +4,123 @@
 #include <time.h>
 gmp_randstate_t state;
 
-mpz_t prime, q, alpha, beta, generator;  // key (prime, q, alpha, beta)
+mpz_t prime, q, alpha, beta, privateKey, hashValue, ephemeralKey, r, s;  // key (prime, q, alpha, beta)
+
 const unsigned long int bitsOfPrime = 1023, bitsOfq = 159;
 
-void findGeneratorOfPrime() {
-	mpz_t res;
-	mpz_inits(generator, res, NULL);
-	while(true) {
-		mpz_urandomm(generator, state, prime);  ///random < prime 
-		mpz_powm(res, generator, prime, prime);
-		if (mpz_cmp(res, generator) == 0) {
-			break;
-		}
-	}
-	mpz_clear(res);
+char* sha = "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a";
+
+void findBeta() {
+    mpz_inits(privateKey, beta, NULL);
+    mpz_urandomm(privateKey, state, q); 
+    mpz_powm(beta, alpha, privateKey, prime); 
+}
+
+void findAlpha() {
+    mpz_t res;
+    mpz_inits(alpha, res, NULL);
+
+    while(true) {
+        mpz_urandomm(alpha, state, q);  
+        mpz_powm(res, alpha, q, q);  
+        if (mpz_cmp(res, alpha) == 0) { // test generator
+            break;
+        }
+    }
+    mpz_clear(res);
+}
+
+void findPrime() {
+    mpz_t multiplier, remainder;
+    mpz_inits(multiplier, remainder, NULL);
+    
+    mpz_set_ui(multiplier, 1); 
+    mpz_mul_2exp(multiplier, multiplier, bitsOfPrime); // multi: 1 * 2 ^ {1023}
+    mpz_cdiv_r(remainder, multiplier, q);
+    mpz_sub(multiplier, multiplier, remainder);
+
+    // mpz_mul_2exp(prime, prime, bitsOfPrime); // prime = 1 * 2 ^ {1023}
+    // mpz_nextprime(prime, prime); 
+
+    while(true) {
+        mpz_add_ui(prime, multiplier, 1);
+        if (mpz_probab_prime_p(prime, 10) != 0) {
+            break;
+        } else {
+            mpz_add(multiplier, multiplier, q);
+        }
+    }
+    mpz_clears(multiplier, remainder, NULL);
+
+}
+
+void ephemeralKeyGen() {
+    mpz_inits(ephemeralKey, NULL);
+    mpz_urandomm(ephemeralKey, state, q); 
 }
 
 void key_gen() {
-	mpz_t remainder, temp, quotient;
-	unsigned long int one = 1, zero = 0;
+    
     mpz_init_set_ui(prime, 1);
     mpz_init_set_ui(q, 1);
-    mpz_inits(temp, remainder, quotient, alpha, NULL);
 
-    mpz_mul_2exp(prime, prime, bitsOfPrime); // prime = 1 * 2^{1023}
-    mpz_nextprime(prime, prime);    
-    findGeneratorOfPrime();
+    // find q
+    mpz_mul_2exp(q, q, bitsOfq);   // q = 1 * 2^{159}
+    mpz_nextprime(q, q);    // get q 
+    
+    // find prime
+    findPrime();
 
-    mpz_mul_2exp(q, q, bitsOfq); // prime = 1 * 2^{159}
-    mpz_sub_ui(temp, prime, one); // temp = prime - 1
-    while(true) {
-    	mpz_nextprime(q, q);
-    	mpz_cdiv_r(remainder, temp, q);
-    	if (mpz_cmp_ui(remainder, zero) == 0) {
-    		mpz_cdiv_q(quotient, temp, q);
-    		break;
-    	}
-    }
-    // find generator of subgroup using "Lagrange’s theorem"
-    mpz_powm(alpha, generator, quotient, prime);
-    mpz_powm(temp, alpha, q, q);
-    if (mpz_cmp(temp, alpha) == 0) {
-		printf("subgroup generator is right!\n");
-	}
+    // find generator of subgroup
+    findAlpha();
+    findBeta();
 
-    mpz_clears(remainder, temp, quotient, NULL);
+    // print
+    gmp_printf("prime: \n%Zd\n", prime);
+    gmp_printf("q: \n%Zd\n", q);
+    gmp_printf("alpha: \n%Zd\n", alpha);
+    gmp_printf("beta: \n%Zd\n", beta);
+    gmp_printf("private key: \n%Zd\n", privateKey);
+
+}
+// gen (r, s)
+void sign() {
+    mpz_t invertKey, temp;
+    mpz_inits(r, s, invertKey, temp, NULL);
+    mpz_init_set_str(hashValue, sha, 16);
+    ephemeralKeyGen();
+
+    //gen r
+    mpz_powm(r, alpha, ephemeralKey, prime);
+    mpz_mod(r, r, q);  
+
+    // gen invert key
+    mpz_invert(invertKey, ephemeralKey, q);
+
+    // gen s
+    mpz_mul(temp, privateKey, r);
+    mpz_add(temp, temp, hashValue);
+    mpz_mul(temp, invertKey, temp);
+    mpz_mod(s, temp, q);
+
+
+    gmp_printf("r: \n%Zd\n", r);
+    gmp_printf("s: \n%Zd\n", s);
+
+    mpz_clears(invertKey, temp, NULL);
 }
 
-
-
-
+void verify() {
+    
+}
 int main() {
 	// init random state
     gmp_randinit_mt(state);
     gmp_randseed_ui(state, time(NULL));
 	
 	key_gen();
-	
+	sign();
+    verify();
 	// clean up
-	mpz_clears(prime, q, alpha, beta, NULL);
+	mpz_clears(prime, q, alpha, beta, privateKey, hashValue, ephemeralKey, r, s, NULL);
 }
